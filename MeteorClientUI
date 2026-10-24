@@ -9,11 +9,9 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "2.2.0",
+	Version = "2.1.0",
 	Flags = {},
 	Lists = {},
-	Mobile = false,
-	TextSize = 13,
 	Font = Enum.Font.GothamMedium,
 	BoldFont = Enum.Font.GothamBold,
 	Theme = {
@@ -68,7 +66,7 @@ local function create(class, props, parent)
 	if inst:IsA("GuiButton") then inst.AutoButtonColor = false end
 	if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
 		inst.Font = Library.Font
-		inst.TextSize = Library.TextSize
+		inst.TextSize = 13
 		inst.TextColor3 = Library.Theme.Text
 		inst.Text = ""
 		if inst:IsA("TextLabel") then inst.BackgroundTransparency = 1 end
@@ -91,11 +89,6 @@ local function pad(inst, l, r, t, b)
 		PaddingLeft = UDim.new(0, l or 0), PaddingRight = UDim.new(0, r or 0),
 		PaddingTop = UDim.new(0, t or 0), PaddingBottom = UDim.new(0, b or 0),
 	}, inst)
-end
-
-local function sz(desktop, mobile)
-	if Library.Mobile then return mobile end
-	return desktop
 end
 
 local function bindAccent(fn, inst)
@@ -141,76 +134,67 @@ local function pointerMove(i)
 	return i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch
 end
 
-local function bindDrag(handle, onStart, onMove, onEnd, lockScroll)
+local function bindDrag(handle, onStart, onMove, onEnd)
 	local dragging = false
-	local active = nil
-	local scroller = nil
-
-	local function unlock()
-		if scroller then
-			scroller.ScrollingEnabled = true
-			scroller = nil
-		end
-	end
-
 	handle.InputBegan:Connect(function(input)
-		if pointerDown(input) and not dragging then
+		if pointerDown(input) then
 			dragging = true
-			active = input
-			if lockScroll then
-				scroller = handle:FindFirstAncestorWhichIsA("ScrollingFrame")
-				if scroller then scroller.ScrollingEnabled = false end
-			end
 			if onStart then onStart(input) end
 			if onMove then onMove(input) end
 		end
 	end)
 	connect(UIS.InputChanged, function(input)
-		if not dragging or not onMove then return end
-		if input.UserInputType == Enum.UserInputType.Touch then
-			if input == active then onMove(input) end
-		elseif input.UserInputType == Enum.UserInputType.MouseMovement then
-			if active and active.UserInputType ~= Enum.UserInputType.Touch then onMove(input) end
-		end
+		if dragging and pointerMove(input) and onMove then onMove(input) end
 	end)
 	connect(UIS.InputEnded, function(input)
 		if dragging and pointerDown(input) then
-			if input.UserInputType == Enum.UserInputType.Touch and input ~= active then return end
 			dragging = false
-			active = nil
-			unlock()
 			if onEnd then onEnd(input) end
 		end
 	end)
 end
 
-local function tapDrag(btn, o)
-	local startPos, startCenter, moved
-	bindDrag(btn, function(input)
-		startPos = input.Position
-		startCenter = btn.AbsolutePosition + btn.AbsoluteSize / 2
-		moved = false
-		if o.onDown then o.onDown() end
-	end, function(input)
-		if not startPos then return end
-		local d = input.Position - startPos
-		if not moved and d.Magnitude > 8 and (not o.canDrag or o.canDrag()) then
-			moved = true
+-- Draggable "tap" helper for the mobile floating buttons. Returns a cleanup function.
+local function makeTapDrag(btn, onTap, onMoved)
+	local dragInput, startPointer, startCenter, moved
+	local conns = {}
+	table.insert(conns, btn.InputBegan:Connect(function(input)
+		if dragInput == nil and pointerDown(input) then
+			dragInput = input
+			startPointer = Vector2.new(input.Position.X, input.Position.Y)
+			startCenter = btn.AbsolutePosition + btn.AbsoluteSize / 2
+			moved = false
 		end
+	end))
+	table.insert(conns, UIS.InputChanged:Connect(function(input)
+		if not dragInput or not pointerMove(input) then return end
+		if input.UserInputType == Enum.UserInputType.Touch and input ~= dragInput then return end
+		local d = Vector2.new(input.Position.X, input.Position.Y) - startPointer
+		if not moved and d.Magnitude > 8 then moved = true end
+		if moved and btn.Parent then
+			local size = btn.Parent.AbsoluteSize
+			local m = btn.AbsoluteSize.X / 2 + 4
+			local c = startCenter + d
+			c = Vector2.new(math.clamp(c.X, m, math.max(m, size.X - m)), math.clamp(c.Y, m, math.max(m, size.Y - m)))
+			btn.Position = UDim2.fromScale(c.X / size.X, c.Y / size.Y)
+		end
+	end))
+	table.insert(conns, UIS.InputEnded:Connect(function(input)
+		if not dragInput then return end
+		local same = input == dragInput
+			or (input.UserInputType == Enum.UserInputType.MouseButton1 and dragInput.UserInputType == Enum.UserInputType.MouseButton1)
+		if not same then return end
+		dragInput = nil
 		if moved then
-			local gs = btn.Parent.AbsoluteSize
-			local c = startCenter + Vector2.new(d.X, d.Y)
-			local sx = math.clamp(c.X / math.max(gs.X, 1), 0.03, 0.97)
-			local sy = math.clamp(c.Y / math.max(gs.Y, 1), 0.05, 0.95)
-			btn.Position = UDim2.fromScale(sx, sy)
-			if o.onMoved then o.onMoved(sx, sy) end
+			if onMoved then onMoved(btn.Position) end
+		elseif onTap then
+			onTap()
 		end
-	end, function()
-		if not startPos then return end
-		startPos = nil
-		if moved and o.onDragEnd then o.onDragEnd() end
-		if o.onUp then o.onUp(moved) end
-	end)
+	end))
+	for _, c in ipairs(conns) do table.insert(Library._conns, c) end
+	return function()
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	end
 end
 
 local function createGui(name)
@@ -352,6 +336,7 @@ function Elements:_finish(el, opts, inst)
 		if el.Flag then Library.Flags[el.Flag] = el end
 	end
 	function el:Destroy()
+		if self._onDestroy then self._onDestroy() end
 		if self.Flag and Library.Flags[self.Flag] == self then Library.Flags[self.Flag] = nil end
 		Library._keybinds[self] = nil
 		inst:Destroy()
@@ -372,7 +357,7 @@ function Elements:CreateLabel(opts)
 	row.AutomaticSize = Enum.AutomaticSize.Y
 	pad(row, 0, 0, 2, 2)
 	local lbl = create("TextLabel", {
-		Text = opts.Text or "", TextColor3 = Library.Theme.TextDim, TextSize = sz(12, 14), TextWrapped = true,
+		Text = opts.Text or "", TextColor3 = Library.Theme.TextDim, TextSize = 12, TextWrapped = true,
 		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
 	}, row)
@@ -386,7 +371,7 @@ function Elements:CreateSection(opts)
 	opts = opts or {}
 	local row = self:_row(22)
 	local lbl = create("TextLabel", {
-		Text = string.upper(opts.Name or "Section"), Font = Library.BoldFont, TextSize = sz(11, 12),
+		Text = string.upper(opts.Name or "Section"), Font = Library.BoldFont, TextSize = 11,
 		Size = UDim2.new(1, 0, 1, -2), TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Bottom,
 	}, row)
 	bindAccent(function(c) lbl.TextColor3 = c end, lbl)
@@ -399,17 +384,15 @@ end
 function Elements:CreateButton(opts)
 	opts = opts or {}
 	local theme = Library.Theme
-	local row = self:_row(sz(30, 40))
+	local row = self:_row(30)
 	local btn = create("TextButton", {
 		Text = opts.Name or "Button", BackgroundColor3 = theme.Module,
 		Position = UDim2.fromOffset(0, 2), Size = UDim2.new(1, 0, 1, -4),
 	}, row)
 	round(btn, 4)
 	local st = stroke(btn)
-	if not Library.Mobile then
-		btn.MouseEnter:Connect(function() st.Color = Library.Theme.Accent end)
-		btn.MouseLeave:Connect(function() st.Color = Library.Theme.Outline end)
-	end
+	btn.MouseEnter:Connect(function() st.Color = Library.Theme.Accent end)
+	btn.MouseLeave:Connect(function() st.Color = Library.Theme.Outline end)
 	btn.MouseButton1Click:Connect(function()
 		btn.BackgroundColor3 = Library.Theme.Accent
 		tween(btn, { BackgroundColor3 = Library.Theme.Module }, 0.3)
@@ -424,23 +407,21 @@ function Elements:CreateToggle(opts)
 	opts = opts or {}
 	local window = self._window
 	local el = { Type = "Toggle", CurrentValue = opts.CurrentValue == true }
-	local row = self:_row(sz(26, 38), "TextButton")
+	local row = self:_row(26, "TextButton")
 	rowLabel(row, opts.Name or "Toggle", 0.8)
-	local trackW, trackH, knobS = sz(30, 40), sz(15, 22), sz(11, 16)
 	local track = create("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(trackW, trackH),
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(30, 15),
 	}, row)
-	round(track, trackH)
+	round(track, 8)
 	local knob = create("Frame", {
-		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(knobS, knobS),
+		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(11, 11),
 	}, track)
-	round(knob, knobS)
-	local knobGap = (trackH - knobS) / 2
+	round(knob, 6)
 
 	local function render(animate)
 		local on = el.CurrentValue
 		local color = on and Library.Theme.Accent or Library.Theme.Outline
-		local pos = UDim2.new(0, on and (trackW - knobS - knobGap) or knobGap, 0.5, 0)
+		local pos = UDim2.new(0, on and 17 or 2, 0.5, 0)
 		if animate then
 			tween(track, { BackgroundColor3 = color })
 			tween(knob, { Position = pos })
@@ -474,25 +455,24 @@ function Elements:CreateSlider(opts)
 	end
 
 	local el = { Type = "Slider", CurrentValue = snap(opts.CurrentValue or min), Range = { min, max } }
-	local labelH, trackY, trackH, knobS = sz(22, 26), sz(26, 36), sz(4, 6), sz(10, 20)
-	local row = self:_row(sz(36, 52))
+	local row = self:_row(36)
 	create("TextLabel", {
-		Text = opts.Name or "Slider", Size = UDim2.new(0.6, 0, 0, labelH), TextXAlignment = Enum.TextXAlignment.Left,
+		Text = opts.Name or "Slider", Size = UDim2.new(0.6, 0, 0, 22), TextXAlignment = Enum.TextXAlignment.Left,
 	}, row)
 	local valueLabel = create("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0.4, 0, 0, labelH),
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0.4, 0, 0, 22),
 		TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = Library.Theme.TextDim,
 	}, row)
 	local track = create("Frame", {
-		BackgroundColor3 = Library.Theme.Outline, Position = UDim2.fromOffset(0, trackY), Size = UDim2.new(1, 0, 0, trackH),
+		BackgroundColor3 = Library.Theme.Outline, Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 4),
 	}, row)
-	round(track, trackH)
+	round(track, 2)
 	local fill = create("Frame", { Size = UDim2.fromScale(0, 1) }, track)
-	round(fill, trackH)
+	round(fill, 2)
 	local knob = create("Frame", {
-		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(knobS, knobS),
+		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(10, 10),
 	}, track)
-	round(knob, knobS)
+	round(knob, 5)
 	bindAccent(function(c) fill.BackgroundColor3 = c end, row)
 
 	local function render()
@@ -513,7 +493,7 @@ function Elements:CreateSlider(opts)
 		local a = math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
 		local v = snap(min + (max - min) * a)
 		if v ~= el.CurrentValue then el:Set(v) end
-	end, nil, true)
+	end)
 	return self:_finish(el, opts, row)
 end
 
@@ -521,11 +501,11 @@ function Elements:CreateInput(opts)
 	opts = opts or {}
 	local window = self._window
 	local el = { Type = "Input", CurrentValue = opts.CurrentValue or "" }
-	local row = self:_row(sz(28, 40))
+	local row = self:_row(28)
 	rowLabel(row, opts.Name or "Input", 0.35)
 	local box = create("TextBox", {
 		BackgroundColor3 = Library.Theme.Module, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
-		Size = UDim2.new(0.63, 0, 0, sz(22, 32)), PlaceholderText = opts.PlaceholderText or "...",
+		Size = UDim2.new(0.63, 0, 0, 22), PlaceholderText = opts.PlaceholderText or "...",
 		PlaceholderColor3 = Library.Theme.TextDim, Text = el.CurrentValue, ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Left, ClipsDescendants = true,
 	}, row)
@@ -546,145 +526,130 @@ function Elements:CreateInput(opts)
 	return self:_finish(el, opts, row)
 end
 
-function Elements:_createPin(el, opts)
+function Elements:_mobileKeybind(opts)
 	local window = self._window
-	if not opts.Callback then
-		function el:Set() end
-		function el:Destroy() end
-		return el
-	end
-
-	local label = tostring(opts.PinLabel or opts.Name or "Key")
-	local hold = el.HoldToInteract
-	local btn = nil
-
-	window._pinCount += 1
-	local slot = window._pinCount - 1
-	local posEl = {
-		Type = "PinPosition",
-		CurrentValue = { X = 0.93 - math.floor(slot / 4) * 0.1, Y = 0.3 + (slot % 4) * 0.15 },
+	local theme = Library.Theme
+	local label = opts.ButtonText or (self.Type == "Module" and self.Name) or opts.Name or "Bind"
+	local isToggle = opts.Toggle == true
+	local el = {
+		Type = "Keybind", CurrentValue = "None", HoldToInteract = false, Holding = false, Callback = opts.Callback,
 	}
+	local row = self:_row(32)
+	rowLabel(row, opts.Name or "Keybind", 0.5)
 
-	local function applyPos()
-		if btn then
-			btn.Position = UDim2.fromScale(posEl.CurrentValue.X, posEl.CurrentValue.Y)
-		end
+	if opts.PCOnly then
+		row.Visible = false
+		function el:Set(k) self.CurrentValue = (typeof(k) == "EnumItem") and k.Name or tostring(k or "None") end
+		return self:_finish(el, opts, row)
 	end
 
-	function posEl:Set(v)
-		if type(v) == "table" and tonumber(v.X) and tonumber(v.Y) then
-			self.CurrentValue = {
-				X = math.clamp(tonumber(v.X), 0.03, 0.97),
-				Y = math.clamp(tonumber(v.Y), 0.05, 0.95),
-			}
-			applyPos()
-		end
+	local btn = create("TextButton", {
+		BackgroundColor3 = theme.Module, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(104, 26), TextSize = 11,
+	}, row)
+	round(btn, 4)
+	local st = stroke(btn)
+
+	local float, stopDrag
+	local function refreshFloat()
+		if not float then return end
+		local on = isToggle and opts.GetState and opts.GetState() or false
+		float.BackgroundColor3 = on and Library.Theme.Accent or Library.Theme.Background
+		float.TextColor3 = on and Color3.new(1, 1, 1) or Library.Theme.Text
+	end
+	local function render()
+		btn.Text = float and "REMOVE" or "ADD KEYBIND"
+		btn.TextColor3 = float and Color3.fromRGB(235, 80, 90) or Library.Theme.Accent
+		st.Color = float and Color3.fromRGB(235, 80, 90) or Library.Theme.Outline
+	end
+	render()
+
+	local function removeFloat()
+		if stopDrag then stopDrag(); stopDrag = nil end
+		if float then float:Destroy(); float = nil end
+		window._floats[el] = nil
+		el._float = nil
+		el.CurrentValue = "None"
 	end
 
-	local function refresh()
-		if not btn then return end
-		local on = opts.GetState and opts.GetState() or false
-		btn.BackgroundColor3 = on and Library.Theme.Accent or Library.Theme.Background
-		btn.BackgroundTransparency = on and 0.1 or 0.25
-	end
-
-	local function flash()
-		if not btn or opts.GetState then return end
-		btn.BackgroundColor3 = Library.Theme.Accent
-		btn.BackgroundTransparency = 0.1
-		tween(btn, { BackgroundColor3 = Library.Theme.Background, BackgroundTransparency = 0.25 }, 0.25)
-	end
-
-	local function ensure()
-		if btn then return end
-		btn = create("TextButton", {
-			Text = label, TextScaled = true, Font = Library.BoldFont,
-			AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(64, 64),
-			BackgroundColor3 = Library.Theme.Background, BackgroundTransparency = 0.25,
-			ZIndex = window.Visible and 0 or 60, Active = true,
-		}, window.Gui)
-		round(btn, 32)
-		pad(btn, 8, 8, 8, 8)
-		create("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 8 }, btn)
-		local st = stroke(btn, Library.Theme.Accent)
-		st.Thickness = 2
-		bindAccent(function(c)
-			st.Color = c
-			refresh()
-		end, btn)
-		window._pins[btn] = true
-		btn.Destroying:Connect(function() window._pins[btn] = nil end)
-		applyPos()
-		tapDrag(btn, {
-			canDrag = function() return window.Visible end,
-			onMoved = function(x, y) posEl.CurrentValue = { X = x, Y = y } end,
-			onDragEnd = function() window:_queueSave() end,
-			onDown = function()
-				if hold and not window.Visible then
-					el.Holding = true
-					safeCall(el.Callback, true)
+	local function addFloat(px, py)
+		if not float then
+			float = create("TextButton", {
+				Name = "MeteorBind", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(58, 58),
+				Text = label, TextWrapped = true, TextScaled = true, Font = Library.BoldFont,
+				ZIndex = window.Visible and 0 or 10,
+			}, window.Gui)
+			round(float, 29)
+			pad(float, 6, 6, 6, 6)
+			create("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 7 }, float)
+			local fs = stroke(float, Library.Theme.Accent)
+			fs.Thickness = 2
+			bindAccent(function(c) fs.Color = c; refreshFloat() end, float)
+			window._floats[el] = true
+			el._float = float
+			stopDrag = makeTapDrag(float, function()
+				if isToggle then
+					safeCall(el.Callback)
+					task.defer(refreshFloat)
+				else
+					float.BackgroundColor3 = Library.Theme.Accent
+					tween(float, { BackgroundColor3 = Library.Theme.Background }, 0.3)
+					safeCall(el.Callback)
 				end
-			end,
-			onUp = function(moved)
-				if hold then
-					if el.Holding then
-						el.Holding = false
-						safeCall(el.Callback, false)
-					end
-					return
-				end
-				if moved then return end
-				flash()
-				safeCall(el.Callback)
-			end,
-		})
+			end, function(pos)
+				el.CurrentValue = string.format("@%.4f,%.4f", pos.X.Scale, pos.Y.Scale)
+				window:_queueSave()
+			end)
+		end
+		float.Position = UDim2.fromScale(px, py)
+		el.CurrentValue = string.format("@%.4f,%.4f", px, py)
+		refreshFloat()
 	end
 
-	local toggle = self:CreateToggle({
-		Name = "On-screen " .. label,
-		CurrentValue = false,
-		Callback = function(v)
-			if v then
-				ensure()
-				btn.Visible = true
-				refresh()
-			elseif btn then
-				btn.Visible = false
-			end
-		end,
-	})
+	local function defaultSpot()
+		local n = 0
+		for _ in pairs(window._floats) do n += 1 end
+		return math.clamp(0.92 - math.floor(n / 5) * 0.09, 0.1, 0.92), 0.25 + (n % 5) * 0.14
+	end
 
-	local base = toggle.Flag or ("pin:" .. label)
-	Library.Flags[base .. ":pos"] = posEl
-	self:_finish(el, opts, toggle.Instance)
-	local baseDestroy = el.Destroy
-
-	function el:Refresh() refresh() end
-	function el:Set(k)
-		if typeof(k) == "EnumItem" then
-			self.CurrentValue = k.Name
-		elseif type(k) == "string" and k ~= "" then
-			self.CurrentValue = k
+	function el:Set(k, silent)
+		local x, y
+		if type(k) == "string" then x, y = k:match("^@([%d%.%-]+),([%d%.%-]+)$") end
+		if x and y then
+			addFloat(math.clamp(tonumber(x) or 0.9, 0, 1), math.clamp(tonumber(y) or 0.5, 0, 1))
 		else
-			self.CurrentValue = "None"
+			removeFloat()
 		end
+		render()
+		if window then window:_queueSave() end
+		if not silent and opts.OnBind then safeCall(opts.OnBind, self.CurrentValue) end
 	end
-	function el:Destroy()
-		if btn then btn:Destroy() end
-		Library.Flags[base .. ":pos"] = nil
-		toggle:Destroy()
-		baseDestroy(self)
-	end
+	el._refresh = refreshFloat
+	el._onDestroy = removeFloat
 
-	Library._keybinds[el] = true
-	return el
+	btn.MouseButton1Click:Connect(function()
+		if float then
+			removeFloat()
+			render()
+			window:_queueSave()
+		else
+			addFloat(defaultSpot())
+			render()
+			window:_queueSave()
+			window:Notify({ Title = label, Content = "Button added. Drag it anywhere on screen.", Duration = 2.5 })
+		end
+	end)
+
+	return self:_finish(el, opts, row)
 end
 
 function Elements:CreateKeybind(opts)
 	opts = opts or {}
 	local window = self._window
+	if window and window.Mobile then return self:_mobileKeybind(opts) end
 	local function toName(k)
 		if typeof(k) == "EnumItem" then return k.Name end
+		if type(k) == "string" and k:sub(1, 1) == "@" then return "None" end
 		if type(k) == "string" and k ~= "" then return k end
 		return "None"
 	end
@@ -695,9 +660,6 @@ function Elements:CreateKeybind(opts)
 		Holding = false,
 		Callback = opts.Callback,
 	}
-	if Library.Mobile then
-		return self:_createPin(el, opts)
-	end
 	local row = self:_row(26)
 	rowLabel(row, opts.Name or "Keybind", 0.5)
 	local btn = create("TextButton", {
@@ -759,8 +721,7 @@ function Elements:CreateDropdown(opts)
 	}, self._container)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
 
-	local headH = sz(26, 38)
-	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, headH), LayoutOrder = 1 }, wrapper)
+	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 1 }, wrapper)
 	rowLabel(head, opts.Name or "Dropdown", 0.4)
 	local valueLabel = create("TextLabel", {
 		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 0), Size = UDim2.new(0.6, -16, 1, 0),
@@ -768,7 +729,7 @@ function Elements:CreateDropdown(opts)
 	}, head)
 	local arrow = create("TextLabel", {
 		Text = "+", TextColor3 = theme.TextDim, TextSize = 14,
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(12, headH),
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(12, 26),
 	}, head)
 
 	local list = create("Frame", {
@@ -798,7 +759,7 @@ function Elements:CreateDropdown(opts)
 		for i, option in ipairs(el.Options) do
 			local name = tostring(option)
 			local b = create("TextButton", {
-				Text = name, Size = UDim2.new(1, 0, 0, sz(22, 34)), LayoutOrder = i,
+				Text = name, Size = UDim2.new(1, 0, 0, 22), LayoutOrder = i,
 				BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left,
 			}, list)
 			pad(b, 10)
@@ -858,20 +819,20 @@ function Elements:CreateColorPicker(opts)
 	}, self._container)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
 
-	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, sz(26, 38)), LayoutOrder = 1 }, wrapper)
+	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 1 }, wrapper)
 	rowLabel(head, opts.Name or "Color", 0.6)
 	local swatch = create("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(sz(30, 40), sz(14, 22)),
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(30, 14),
 	}, head)
 	round(swatch, 4)
 	stroke(swatch)
 
 	local picker = create("Frame", {
-		BackgroundColor3 = theme.Module, Size = UDim2.new(1, 0, 0, sz(108, 144)), Visible = false, LayoutOrder = 2,
+		BackgroundColor3 = theme.Module, Size = UDim2.new(1, 0, 0, 108), Visible = false, LayoutOrder = 2,
 	}, wrapper)
 	round(picker, 4)
 
-	local sv = create("Frame", { Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -sz(42, 58), 0, sz(92, 128)), ClipsDescendants = true }, picker)
+	local sv = create("Frame", { Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -42, 0, 92), ClipsDescendants = true }, picker)
 	local white = create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1) }, sv)
 	create("UIGradient", { Transparency = NumberSequence.new(0, 1) }, white)
 	local black = create("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1) }, sv)
@@ -883,7 +844,7 @@ function Elements:CreateColorPicker(opts)
 	create("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 1.5 }, svCursor)
 
 	local hue = create("Frame", {
-		BackgroundColor3 = Color3.new(1, 1, 1), Position = UDim2.new(1, -sz(26, 42), 0, 8), Size = UDim2.fromOffset(sz(16, 30), sz(92, 128)),
+		BackgroundColor3 = Color3.new(1, 1, 1), Position = UDim2.new(1, -26, 0, 8), Size = UDim2.fromOffset(16, 92),
 	}, picker)
 	local keys = {}
 	for i = 0, 6 do
@@ -915,11 +876,11 @@ function Elements:CreateColorPicker(opts)
 		s = math.clamp((input.Position.X - sv.AbsolutePosition.X) / math.max(sv.AbsoluteSize.X, 1), 0, 1)
 		v = 1 - math.clamp((input.Position.Y - sv.AbsolutePosition.Y) / math.max(sv.AbsoluteSize.Y, 1), 0, 1)
 		update()
-	end, nil, true)
+	end)
 	bindDrag(hue, nil, function(input)
 		h = math.clamp((input.Position.Y - hue.AbsolutePosition.Y) / math.max(hue.AbsoluteSize.Y, 1), 0, 0.9999)
 		update()
-	end, nil, true)
+	end)
 
 	head.MouseButton1Click:Connect(function() picker.Visible = not picker.Visible end)
 	return self:_finish(el, opts, wrapper)
@@ -942,35 +903,31 @@ function Elements:CreateEntryList(opts)
 		if #entries == 0 then
 			local empty = create("TextLabel", {
 				Text = opts.Empty or "Nothing here", TextColor3 = Library.Theme.TextDim, TextSize = 12,
-				Size = UDim2.new(1, 0, 0, sz(24, 34)), TextXAlignment = Enum.TextXAlignment.Left,
+				Size = UDim2.new(1, 0, 0, 24), TextXAlignment = Enum.TextXAlignment.Left,
 			}, wrapper)
 			table.insert(rows, empty)
 			return
 		end
 		for i, e in ipairs(entries) do
-			local row = create("Frame", { BackgroundColor3 = Library.Theme.Header, Size = UDim2.new(1, 0, 0, sz(28, 40)), LayoutOrder = i }, wrapper)
+			local row = create("Frame", { BackgroundColor3 = Library.Theme.Header, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = i }, wrapper)
 			round(row, 4)
 			local actions = e.Actions or {}
-			local bw, bh = sz(46, 58), sz(20, 30)
-			local step = bw + 4
 			create("TextLabel", {
-				Text = e.Text, Position = UDim2.fromOffset(9, 0), Size = UDim2.new(1, -(14 + step * #actions), 1, 0),
+				Text = e.Text, Position = UDim2.fromOffset(9, 0), Size = UDim2.new(1, -(14 + 50 * #actions), 1, 0),
 				TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
 			}, row)
 			local x = -5
 			for j = #actions, 1, -1 do
 				local a = actions[j]
 				local b = create("TextButton", {
-					Text = a.Text, TextSize = sz(11, 13), BackgroundColor3 = Library.Theme.Setting, TextColor3 = Library.Theme.TextDim,
-					AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(bw, bh),
+					Text = a.Text, TextSize = 11, BackgroundColor3 = Library.Theme.Setting, TextColor3 = Library.Theme.TextDim,
+					AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(46, 20),
 				}, row)
 				round(b, 4)
-				if not Library.Mobile then
-					b.MouseEnter:Connect(function() b.TextColor3 = Library.Theme.Accent end)
-					b.MouseLeave:Connect(function() b.TextColor3 = Library.Theme.TextDim end)
-				end
+				b.MouseEnter:Connect(function() b.TextColor3 = Library.Theme.Accent end)
+				b.MouseLeave:Connect(function() b.TextColor3 = Library.Theme.TextDim end)
 				b.MouseButton1Click:Connect(function() safeCall(a.Callback, e) end)
-				x -= step
+				x -= 50
 			end
 			table.insert(rows, row)
 		end
@@ -985,12 +942,11 @@ local function makePanel(window, parent, o)
 	local name, width = o.Name, o.Width
 	local sidePad = o.SidePad or 0
 	local topPad, botPad = o.TopPad or 0, o.BotPad or 0
-	local hh = sz(34, 42)
 
 	local panel = create("Frame", {
 		Name = name, BackgroundColor3 = o.AccentBg and theme.Accent or theme.Background,
 		BackgroundTransparency = o.AccentBg and 0.05 or 0.03,
-		Position = o.Position, Size = UDim2.fromOffset(width, hh), ClipsDescendants = true, Active = Library.Mobile,
+		Position = o.Position, Size = UDim2.fromOffset(width, 34), ClipsDescendants = true,
 	}, parent)
 	round(panel, 6)
 	stroke(panel)
@@ -1000,7 +956,7 @@ local function makePanel(window, parent, o)
 
 	local header = create("TextButton", {
 		BackgroundColor3 = theme.Background, BackgroundTransparency = o.AccentBg and 0 or 1,
-		Size = UDim2.new(1, 0, 0, hh),
+		Size = UDim2.new(1, 0, 0, 34),
 	}, panel)
 	create("TextLabel", {
 		Text = name, Font = Library.BoldFont, TextSize = 14, Position = UDim2.fromOffset(12, 0),
@@ -1008,7 +964,7 @@ local function makePanel(window, parent, o)
 	}, header)
 	local sign = create("TextLabel", {
 		Text = "-", TextColor3 = theme.TextDim, TextSize = 16, AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 0, 0), Size = UDim2.fromOffset(12, hh),
+		Position = UDim2.new(1, -12, 0, 0), Size = UDim2.fromOffset(12, 34),
 	}, header)
 	local line = create("Frame", { Position = UDim2.new(0, 0, 1, -2), Size = UDim2.new(1, 0, 0, 2) }, header)
 	create("UIGradient", {
@@ -1017,8 +973,8 @@ local function makePanel(window, parent, o)
 	bindAccent(function(c) line.BackgroundColor3 = c end, line)
 
 	local body = create("ScrollingFrame", {
-		BackgroundTransparency = 1, Position = UDim2.fromOffset(0, hh), Size = UDim2.new(1, 0, 0, 0),
-		ScrollBarThickness = sz(2, 4), Active = Library.Mobile, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 34), Size = UDim2.new(1, 0, 0, 0),
+		ScrollBarThickness = 2, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, panel)
 	if o.AccentBg then
@@ -1032,26 +988,15 @@ local function makePanel(window, parent, o)
 	local p = { Panel = panel, Body = body, Collapsed = false }
 
 	local function resize()
-		local pw = width
-		if Library.Mobile then
-			pw = math.min(width, math.max(window:_viewport().X - 24, 200))
-		end
 		if p.Collapsed then
-			panel.Size = UDim2.fromOffset(pw, hh)
+			panel.Size = UDim2.fromOffset(width, 34)
 			return
 		end
-		local limit = o.MaxHeight or window.MaxPanelHeight
-		if Library.Mobile then
-			limit = math.max(math.min(limit, window:_viewport().Y - panel.Position.Y.Offset - hh - 12), 80)
-		end
-		local h = math.min(layout.AbsoluteContentSize.Y + topPad + botPad, limit)
+		local h = math.min(layout.AbsoluteContentSize.Y + topPad + botPad, o.MaxHeight or window.MaxPanelHeight)
 		body.Size = UDim2.new(1, 0, 0, h)
-		panel.Size = UDim2.fromOffset(pw, hh + h)
+		panel.Size = UDim2.fromOffset(width, 34 + h)
 	end
-	p.Resize = resize
-	table.insert(window._panels, p)
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
-	if Library.Mobile then resize() end
 
 	function p.SetCollapsed(c)
 		p.Collapsed = c and true or false
@@ -1119,7 +1064,7 @@ function Category:CreateModule(opts)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
 
 	local head = create("TextButton", {
-		BackgroundColor3 = theme.Module, BackgroundTransparency = 0.55, Size = UDim2.new(1, 0, 0, sz(30, 42)), LayoutOrder = 1,
+		BackgroundColor3 = theme.Module, BackgroundTransparency = 0.55, Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1,
 	}, wrapper)
 	round(head, 4)
 	local bar = create("Frame", {
@@ -1127,12 +1072,12 @@ function Category:CreateModule(opts)
 	}, head)
 	round(bar, 2)
 	local title = create("TextLabel", {
-		Text = mod.Name, Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -sz(44, 54), 1, 0),
+		Text = mod.Name, Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -44, 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, head)
 
 	local dotsBtn = create("TextButton", {
-		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(sz(30, 46), sz(30, 42)),
+		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(30, 30),
 	}, head)
 	local dots = {}
 	for i = -1, 1 do
@@ -1174,7 +1119,6 @@ function Category:CreateModule(opts)
 		end
 		local dotColor = settings.Visible and Color3.new(1, 1, 1) or Library.Theme.TextDim
 		for _, d in ipairs(dots) do d.BackgroundColor3 = dotColor end
-		if mod._pin and mod._pin.Refresh then mod._pin:Refresh() end
 	end
 	bindAccent(function() render(false) end, wrapper)
 
@@ -1189,6 +1133,7 @@ function Category:CreateModule(opts)
 		self.CurrentValue = v
 		render(true)
 		window:_hudSet(self, v)
+		if self._bindEl and self._bindEl._refresh then self._bindEl._refresh() end
 		if not silent then
 			emit(window, opts.Callback, v)
 			if window.ToggleNotify and not window._loading then
@@ -1200,6 +1145,7 @@ function Category:CreateModule(opts)
 	function mod:IsEnabled() return self.CurrentValue end
 	function mod:Expand(open) setOpen(open ~= false) end
 	function mod:Destroy()
+		if self._bindEl and self._bindEl._onDestroy then self._bindEl._onDestroy() end
 		if Library.Flags[flag] == self then Library.Flags[flag] = nil end
 		window:_hudSet(self, false)
 		wrapper:Destroy()
@@ -1208,26 +1154,21 @@ function Category:CreateModule(opts)
 	head.MouseButton1Click:Connect(function() mod:Toggle() end)
 	head.MouseButton2Click:Connect(function() setOpen(not settings.Visible) end)
 	dotsBtn.MouseButton1Click:Connect(function() setOpen(not settings.Visible) end)
-	if not Library.Mobile then
-		head.MouseEnter:Connect(function()
-			hovering = true
-			render(true)
-			if opts.Description then window:_showTip(opts.Description) end
-		end)
-		head.MouseLeave:Connect(function()
-			hovering = false
-			render(true)
-			window:_hideTip()
-		end)
-		head.MouseMoved:Connect(function() window:_moveTip() end)
-	end
+	head.MouseEnter:Connect(function()
+		hovering = true
+		render(true)
+		if opts.Description then window:_showTip(opts.Description) end
+	end)
+	head.MouseLeave:Connect(function()
+		hovering = false
+		render(true)
+		window:_hideTip()
+	end)
+	head.MouseMoved:Connect(function() window:_moveTip() end)
 
 	Library.Flags[flag] = mod
-	if Library.Mobile and opts.Description then
-		mod:CreateLabel(opts.Description)
-	end
-	mod._pin = mod:CreateKeybind({
-		Name = "Bind", CurrentKeybind = opts.Keybind, PinLabel = mod.Name,
+	mod._bindEl = mod:CreateKeybind({
+		Name = "Bind", CurrentKeybind = opts.Keybind, Toggle = true,
 		GetState = function() return mod.CurrentValue end,
 		Callback = function() mod:Toggle() end,
 	})
@@ -1249,12 +1190,6 @@ function Category:IsCollapsed() return self._p.Collapsed end
 function Library:CreateWindow(opts)
 	opts = opts or {}
 	initInput()
-	if opts.Mobile ~= nil then
-		Library.Mobile = opts.Mobile == true
-	else
-		Library.Mobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
-	end
-	Library.TextSize = Library.Mobile and 15 or 13
 	local cs = opts.ConfigurationSaving or {}
 	local theme = Library.Theme
 
@@ -1267,10 +1202,6 @@ function Library:CreateWindow(opts)
 		_pages = {},
 		_pageCount = 0,
 		_hud = {},
-		_panels = {},
-		_pins = {},
-		_pinCount = 0,
-		Mobile = Library.Mobile,
 		_z = 1,
 		_saveQueued = false,
 		_loading = false,
@@ -1283,6 +1214,9 @@ function Library:CreateWindow(opts)
 			PerGame = cs.PerGame ~= false,
 		},
 	}, Window)
+	window.Mobile = opts.Mobile
+	if window.Mobile == nil then window.Mobile = UIS.TouchEnabled and not UIS.KeyboardEnabled end
+	window._floats = {}
 	window.CurrentConfig = sanitize(window.Config.FileName)
 	window._dim = opts.DimBackground == true
 
@@ -1293,13 +1227,13 @@ function Library:CreateWindow(opts)
 		Size = UDim2.fromScale(1, 1), Visible = window._dim,
 	}, window.Holder)
 
-	local navH = sz(38, 40)
-	if Library.Mobile then
+	if window.Mobile then
+		-- scrollable tab bar with room on each side for the close button
 		window.Nav = create("ScrollingFrame", {
 			BackgroundColor3 = theme.Background, BackgroundTransparency = 0.03, AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.new(1, -150, 0, navH),
-			ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X,
-			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X,
+			Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.new(1, -116, 0, 38), CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollingDirection = Enum.ScrollingDirection.X,
+			ScrollBarThickness = 0, ClipsDescendants = true,
 		}, window.Holder)
 	else
 		window.Nav = create("Frame", {
@@ -1316,7 +1250,7 @@ function Library:CreateWindow(opts)
 	}, window.Nav)
 	local titleWidth = TextService:GetTextSize(window.Name, 14, Library.BoldFont, Vector2.new(500, 30)).X + 18
 	local navTitle = create("TextLabel", {
-		Text = window.Name, Font = Library.BoldFont, TextSize = 14, Size = UDim2.fromOffset(titleWidth, navH), LayoutOrder = -1000,
+		Text = window.Name, Font = Library.BoldFont, TextSize = 14, Size = UDim2.fromOffset(titleWidth, 38), LayoutOrder = 0,
 	}, window.Nav)
 	bindAccent(function(c) navTitle.TextColor3 = c end, navTitle)
 
@@ -1328,17 +1262,37 @@ function Library:CreateWindow(opts)
 		SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 1),
 	}, window.Hud)
 
-	local phone = Library.Mobile
+	if window.Mobile then
+		window.Hud.Position = UDim2.new(1, -8, 0, 60)
+
+		-- "X" button: closes the menu
+		local closeBtn = create("TextButton", {
+			Text = "X", Font = Library.BoldFont, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+			BackgroundColor3 = Color3.fromRGB(190, 48, 62), AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -10, 0, 12), Size = UDim2.fromOffset(38, 38),
+		}, window.Holder)
+		round(closeBtn, 19)
+		closeBtn.MouseButton1Click:Connect(function() window:SetVisible(false) end)
+
+		-- floating circular button that reopens the menu (draggable)
+		local openBtn = create("TextButton", {
+			Name = "MeteorOpen", Text = "M", Font = Library.BoldFont, TextSize = 20, TextColor3 = Color3.new(1, 1, 1),
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.06, 0.16),
+			Size = UDim2.fromOffset(48, 48), ZIndex = 10, Visible = false,
+		}, window.Gui)
+		round(openBtn, 24)
+		bindAccent(function(c) openBtn.BackgroundColor3 = c end, openBtn)
+		makeTapDrag(openBtn, function() window:SetVisible(true) end)
+		window._openBtn = openBtn
+	end
+
 	window.NotifHolder = create("Frame", {
-		BackgroundTransparency = 1,
-		AnchorPoint = phone and Vector2.new(0.5, 0) or Vector2.new(1, 1),
-		Position = phone and UDim2.new(0.5, 0, 0, 54) or UDim2.new(1, -12, 1, -12),
-		Size = phone and UDim2.new(0, 260, 0.5, 0) or UDim2.new(0, 260, 1, -24), ZIndex = 50,
+		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -12),
+		Size = UDim2.new(0, 260, 1, -24), ZIndex = 50,
 	}, window.Gui)
 	create("UIListLayout", {
 		SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6),
-		HorizontalAlignment = phone and Enum.HorizontalAlignment.Center or Enum.HorizontalAlignment.Right,
-		VerticalAlignment = phone and Enum.VerticalAlignment.Top or Enum.VerticalAlignment.Bottom,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Bottom,
 	}, window.NotifHolder)
 
 	window.Tip = create("Frame", {
@@ -1352,41 +1306,8 @@ function Library:CreateWindow(opts)
 		TextSize = 12, Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, ZIndex = 10001,
 	}, window.Tip)
 
-	if Library.Mobile then
-		window.Fab = create("TextButton", {
-			Text = string.upper(string.sub(window.Name, 1, 1)), Font = Library.BoldFont, TextSize = 18,
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 38, 0.5, 0), Size = UDim2.fromOffset(48, 48),
-			BackgroundColor3 = theme.Background, BackgroundTransparency = 0.1, ZIndex = 70, Active = true,
-			Visible = not window.Visible,
-		}, window.Gui)
-		round(window.Fab, 24)
-		local fabStroke = stroke(window.Fab, theme.Accent)
-		fabStroke.Thickness = 2
-		bindAccent(function(c) fabStroke.Color = c end, window.Fab)
-		tapDrag(window.Fab, {
-			canDrag = function() return true end,
-			onUp = function(moved)
-				if not moved then window:SetVisible(true) end
-			end,
-		})
-
-		window.CloseBtn = create("TextButton", {
-			Text = "X", Font = Library.BoldFont, TextSize = 16,
-			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 6), Size = UDim2.fromOffset(54, navH),
-			BackgroundColor3 = theme.Background, BackgroundTransparency = 0.03, ZIndex = 70, Active = true,
-			Visible = window.Visible,
-		}, window.Gui)
-		round(window.CloseBtn, 8)
-		stroke(window.CloseBtn)
-		window.CloseBtn.MouseButton1Click:Connect(function() window:SetVisible(false) end)
-
-		connect(window.Gui:GetPropertyChangedSignal("AbsoluteSize"), function()
-			for _, p in ipairs(window._panels) do p.Resize() end
-		end)
-	end
-
 	window._modulesScreen = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, window.Holder)
-	window:_addPage("Modules", window._modulesScreen, not Library.Mobile)
+	window:_addPage("Modules", window._modulesScreen, not window.Mobile)
 	window:_buildConfigPage()
 	window:_buildGuiPage()
 	window:SelectPage("Modules")
@@ -1398,19 +1319,13 @@ end
 function Window:SetVisible(v)
 	self.Visible = v and true or false
 	self.Holder.Visible = self.Visible
-	if self.Fab then self.Fab.Visible = not self.Visible end
-	if self.CloseBtn then self.CloseBtn.Visible = self.Visible end
-	for pin in pairs(self._pins) do
-		pin.ZIndex = self.Visible and 0 or 60
-	end
 	if not self.Visible then self:_hideTip() end
-end
-
-function Window:_viewport()
-	local s = self.Gui.AbsoluteSize
-	if s.X > 0 and s.Y > 0 then return s end
-	local cam = workspace.CurrentCamera
-	return cam and cam.ViewportSize or Vector2.new(1280, 720)
+	if self.Mobile then
+		if self._openBtn then self._openBtn.Visible = not self.Visible end
+		for el in pairs(self._floats) do
+			if el._float then el._float.ZIndex = self.Visible and 0 or 10 end
+		end
+	end
 end
 
 function Window:Toggle() self:SetVisible(not self.Visible) end
@@ -1423,6 +1338,7 @@ function Window:SetDim(v)
 end
 
 function Window:_showTip(text)
+	if self.Mobile then return end
 	self.TipLabel.Text = text
 	self.Tip.Visible = true
 	self:_moveTip()
@@ -1442,7 +1358,7 @@ function Window:_hudSet(mod, on)
 		local w = TextService:GetTextSize(mod.Name, 13, Library.Font, Vector2.new(500, 30)).X
 		label = create("TextLabel", {
 			Text = mod.Name, BackgroundTransparency = 0.45, BackgroundColor3 = Color3.new(0, 0, 0),
-			Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = -math.floor(w), TextSize = 13,
+			Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = -math.floor(w),
 		}, self.Hud)
 		pad(label, 7, 7, 2, 2)
 		bindAccent(function(c) label.TextColor3 = c end, label)
@@ -1496,39 +1412,22 @@ end
 
 function Window:_addPage(name, screen, available, order)
 	self._pageCount += 1
-	local width = TextService:GetTextSize(name, Library.TextSize, Library.Font, Vector2.new(500, 30)).X + 28
+	local width = TextService:GetTextSize(name, 13, Library.Font, Vector2.new(500, 30)).X + 28
 	local btn = create("TextButton", {
-		Text = name, Size = UDim2.fromOffset(width, sz(38, 40)), BackgroundTransparency = 1,
-		TextColor3 = Library.Theme.TextDim, Visible = available, LayoutOrder = order or self._pageCount,
+		Text = name, Size = UDim2.fromOffset(width, 38), BackgroundTransparency = 1,
+		TextColor3 = Library.Theme.TextDim, Visible = available, LayoutOrder = order or (100 + self._pageCount),
 	}, self.Nav)
 	local underline = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -3), Size = UDim2.new(1, -20, 0, 2), Visible = false,
 	}, btn)
 	round(underline, 1)
 	bindAccent(function(c) underline.BackgroundColor3 = c end, underline)
-	btn.MouseButton1Click:Connect(function()
-		self._navigated = true
-		self:SelectPage(name)
-	end)
-	self._pages[name] = {
-		Screen = screen, Button = btn, Underline = underline, Available = available, Order = order or self._pageCount,
-	}
+	btn.MouseButton1Click:Connect(function() self:SelectPage(name) end)
+	self._pages[name] = { Screen = screen, Button = btn, Underline = underline, Available = available }
 end
 
 function Window:SelectPage(name)
-	local target = self._pages[name]
-	if not target or not target.Available then
-		name = self._defaultPage
-		target = name and self._pages[name]
-		if not target then
-			for n, p in pairs(self._pages) do
-				if p.Available and (not target or p.Order < target.Order) then
-					name, target = n, p
-				end
-			end
-		end
-		if not target then return end
-	end
+	if not self._pages[name] or not self._pages[name].Available then name = self._defaultPage or "Modules" end
 	self.CurrentPage = name
 	for n, p in pairs(self._pages) do
 		local on = (n == name)
@@ -1538,28 +1437,28 @@ function Window:SelectPage(name)
 	end
 end
 
-function Window:_createMobileCategory(name)
-	local screen = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false }, self.Holder)
-	local p = makePanel(self, screen, {
-		Name = name, Position = UDim2.new(0.5, 0, 0, 54), Width = 340, Draggable = false, AccentBg = true,
-		SidePad = 6, TopPad = 6, BotPad = 6, Gap = 4, MaxHeight = 480,
-	})
-	p.Panel.AnchorPoint = Vector2.new(0.5, 0)
-	self:_addPage(name, screen, true, -500 + #self.Categories)
-	local cat = setmetatable({ Name = name, _window = self, _container = p.Body, _order = 0, Panel = p.Panel, _p = p }, Category)
-	table.insert(self.Categories, cat)
-	if #self.Categories == 1 and not self._navigated then
-		self:SelectPage(name)
-	end
-	return cat
-end
-
 function Window:CreateCategory(name)
 	name = tostring(name or "Category")
-	if Library.Mobile then
-		return self:_createMobileCategory(name)
-	end
 	local idx = #self.Categories
+	if self.Mobile then
+		-- mobile: every category is its own list page in the tab bar
+		local cam0 = workspace.CurrentCamera
+		local vp = cam0 and cam0.ViewportSize or Vector2.new(800, 400)
+		local screen = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false }, self.Holder)
+		local p = makePanel(self, screen, {
+			Name = name, Position = UDim2.new(0.5, 0, 0, 62), Width = math.clamp(vp.X - 24, 220, 400), Draggable = false,
+			AccentBg = true, SidePad = 4, TopPad = 4, BotPad = 4, Gap = 3, MaxHeight = math.max(120, vp.Y - 62 - 16),
+		})
+		p.Panel.AnchorPoint = Vector2.new(0.5, 0)
+		local mcat = setmetatable({ Name = name, _window = self, _container = p.Body, _order = 0, Panel = p.Panel, _p = p, _mobile = true }, Category)
+		table.insert(self.Categories, mcat)
+		self:_addPage(name, screen, true, #self.Categories)
+		if not self._defaultPage then
+			self._defaultPage = name
+			self:SelectPage(name)
+		end
+		return mcat
+	end
 	local cam = workspace.CurrentCamera
 	local vx = cam and cam.ViewportSize.X or 1280
 	local width, gap = self.PanelWidth, 14
@@ -1586,7 +1485,7 @@ function Window:CreatePage(name, opts)
 	end
 	local screen = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false }, self.Holder)
 	local p = makePanel(self, screen, {
-		Name = name, Position = UDim2.new(0.5, 0, 0, sz(66, 54)), Width = opts.Width or 340, Draggable = false,
+		Name = name, Position = UDim2.new(0.5, 0, 0, 66), Width = opts.Width or 340, Draggable = false,
 		SidePad = 10, TopPad = 8, BotPad = 8, Gap = 4, MaxHeight = opts.MaxHeight or 480,
 	})
 	p.Panel.AnchorPoint = Vector2.new(0.5, 0)
@@ -1685,7 +1584,7 @@ function Window:CreateListPage(opts)
 
 	page:CreateLabel(opts.Description or "Players in this list. Saved per game with your config.")
 	page:CreateInput({
-		Name = "Add", PlaceholderText = sz("username, press Enter", "username, then tap Done"), RemoveTextAfterFocusLost = true,
+		Name = "Add", PlaceholderText = "username, press Enter", RemoveTextAfterFocusLost = true,
 		Callback = function(t) if t ~= "" then page:Add(t) end end,
 	})
 	page:CreateSection(name)
@@ -1720,10 +1619,14 @@ function Window:SaveConfiguration(name)
 			if el.CurrentValue ~= nil then data[flag] = encodeValue(el) end
 		end
 		data.__panels = {}
-		for _, cat in ipairs(Library.Mobile and {} or self.Categories) do
-			data.__panels[cat.Name] = {
-				X = cat.Panel.Position.X.Offset, Y = cat.Panel.Position.Y.Offset, Collapsed = cat._p.Collapsed,
-			}
+		for _, cat in ipairs(self.Categories) do
+			if cat._mobile then
+				data.__panels[cat.Name] = { Collapsed = cat._p.Collapsed }
+			else
+				data.__panels[cat.Name] = {
+					X = cat.Panel.Position.X.Offset, Y = cat.Panel.Position.Y.Offset, Collapsed = cat._p.Collapsed,
+				}
+			end
 		end
 		ensureFolder(self:_dir())
 		writefile(self:_path(name), HttpService:JSONEncode(data))
@@ -1749,11 +1652,11 @@ function Window:LoadConfiguration(name)
 			if not success then warn("[MeteorUI] failed to load '" .. flag .. "': " .. tostring(e)) end
 		end
 	end
-	if type(data.__panels) == "table" and not Library.Mobile then
+	if type(data.__panels) == "table" then
 		for _, cat in ipairs(self.Categories) do
 			local info = data.__panels[cat.Name]
 			if type(info) == "table" then
-				cat.Panel.Position = UDim2.fromOffset(info.X or 20, info.Y or 66)
+				if not cat._mobile then cat.Panel.Position = UDim2.fromOffset(info.X or 20, info.Y or 66) end
 				cat._p.SetCollapsed(info.Collapsed == true)
 			end
 		end
@@ -1866,7 +1769,7 @@ function Window:_buildGuiPage()
 	page:CreateToggle({ Name = "Toggle notifications", CurrentValue = false, Flag = "gui:ToggleNotify", Callback = function(v) window.ToggleNotify = v end })
 	page:CreateToggle({ Name = "Dim background", CurrentValue = window._dim, Flag = "gui:Dim", Callback = function(v) window:SetDim(v) end })
 	page:CreateKeybind({
-		Name = "Menu key", CurrentKeybind = self.ToggleKey, Flag = "gui:MenuKey",
+		Name = "Menu key", CurrentKeybind = self.ToggleKey, Flag = "gui:MenuKey", PCOnly = true,
 		OnBind = function(k) window.ToggleKey = (k ~= "None") and Enum.KeyCode[k] or nil end,
 	})
 	page:CreateButton({ Name = "Unload GUI", Callback = function() Library:Destroy() end })
