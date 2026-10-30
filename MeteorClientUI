@@ -9,7 +9,7 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "2.2.0",
+	Version = "2.3.0",
 	Flags = {},
 	Lists = {},
 	Mobile = false,
@@ -37,10 +37,26 @@ local Library = {
 	},
 	BaseAccent = Color3.fromRGB(145, 61, 226),
 	Rainbow = false,
+	ModuleStyle = "Actiono",
+	ModuleStyleOrder = { "Actiono", "Leyield" },
+	ModuleStyles = {
+		Actiono = {
+			Panel = 0.2, Solid = true, Side = 4, Top = 4, Bot = 4, Gap = 3, ModGap = 2, Round = 4, SetRound = 4,
+			Off = "Module", OffT = 0.35, OnMix = 0.45, OnT = 0.2, HoverMix = 0.05, HoverT = 0.1,
+			Setting = "Setting", SettingT = 0.25, Dim = "TextDim", BarInset = 6, BarRound = 2,
+		},
+		Leyield = {
+			Panel = 0.03, Solid = false, Side = 0, Top = 0, Bot = 5, Gap = 1, ModGap = 0, Round = 0, SetRound = 0,
+			Off = Color3.fromRGB(24, 24, 32), OffT = 0, OnMix = 0.3, OnT = 0, HoverMix = 0.05, HoverT = 0,
+			Setting = Color3.fromRGB(18, 18, 24), SettingT = 0, Dim = Color3.fromRGB(148, 148, 164), BarInset = 0, BarRound = 0,
+		},
+	},
 	_conns = {},
+	_styleFns = {},
 	_accent = {},
 	_windows = {},
 	_keybinds = {},
+	_unloadHooks = {},
 }
 
 local function connect(signal, fn)
@@ -107,6 +123,30 @@ local function bindAccent(fn, inst)
 	return fn
 end
 
+local function style()
+	return Library.ModuleStyles[Library.ModuleStyle] or Library.ModuleStyles.Actiono
+end
+
+local function themed(v)
+	if type(v) == "string" then return Library.Theme[v] end
+	return v
+end
+
+local function bindStyle(fn, inst)
+	fn()
+	Library._styleFns[fn] = true
+	if inst then
+		inst.Destroying:Connect(function() Library._styleFns[fn] = nil end)
+	end
+	return fn
+end
+
+function Library:SetModuleStyle(name)
+	if not self.ModuleStyles[name] then return end
+	self.ModuleStyle = name
+	for fn in pairs(self._styleFns) do pcall(fn) end
+end
+
 function Library:_applyAccent(color)
 	self.Theme.Accent = color
 	for fn in pairs(self._accent) do pcall(fn, color) end
@@ -135,10 +175,6 @@ end
 
 local function pointerDown(i)
 	return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
-end
-
-local function pointerMove(i)
-	return i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch
 end
 
 local function bindDrag(handle, onStart, onMove, onEnd, lockScroll)
@@ -327,7 +363,6 @@ Page.__index = Page
 
 local Category = {}
 Category.__index = Category
-setmetatable(Category, { __index = Elements })
 
 local Window = {}
 Window.__index = Window
@@ -428,6 +463,7 @@ function Elements:CreateToggle(opts)
 	local row = self:_row(sz(26, 38), "TextButton")
 	rowLabel(row, opts.Name or "Toggle", 0.8)
 	local trackW, trackH, knobS = sz(30, 40), sz(15, 22), sz(11, 16)
+	local knobGap = (trackH - knobS) / 2
 	local track = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(trackW, trackH),
 	}, row)
@@ -436,7 +472,6 @@ function Elements:CreateToggle(opts)
 		BackgroundColor3 = Color3.new(1, 1, 1), AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(knobS, knobS),
 	}, track)
 	round(knob, knobS)
-	local knobGap = (trackH - knobS) / 2
 
 	local function render(animate)
 		local on = el.CurrentValue
@@ -547,140 +582,6 @@ function Elements:CreateInput(opts)
 	return self:_finish(el, opts, row)
 end
 
-function Elements:_createPin(el, opts)
-	local window = self._window
-	if not opts.Callback then
-		function el:Set() end
-		function el:Destroy() end
-		return el
-	end
-
-	local label = tostring(opts.PinLabel or opts.Name or "Key")
-	local hold = el.HoldToInteract
-	local btn = nil
-
-	window._pinCount += 1
-	local slot = window._pinCount - 1
-	local posEl = {
-		Type = "PinPosition",
-		CurrentValue = { X = 0.93 - math.floor(slot / 4) * 0.1, Y = 0.3 + (slot % 4) * 0.15 },
-	}
-
-	local function applyPos()
-		if btn then
-			btn.Position = UDim2.fromScale(posEl.CurrentValue.X, posEl.CurrentValue.Y)
-		end
-	end
-
-	function posEl:Set(v)
-		if type(v) == "table" and tonumber(v.X) and tonumber(v.Y) then
-			self.CurrentValue = {
-				X = math.clamp(tonumber(v.X), 0.03, 0.97),
-				Y = math.clamp(tonumber(v.Y), 0.05, 0.95),
-			}
-			applyPos()
-		end
-	end
-
-	local function refresh()
-		if not btn then return end
-		local on = opts.GetState and opts.GetState() or false
-		btn.BackgroundColor3 = on and Library.Theme.Accent or Library.Theme.Background
-		btn.BackgroundTransparency = on and 0.1 or 0.25
-	end
-
-	local function flash()
-		if not btn or opts.GetState then return end
-		btn.BackgroundColor3 = Library.Theme.Accent
-		btn.BackgroundTransparency = 0.1
-		tween(btn, { BackgroundColor3 = Library.Theme.Background, BackgroundTransparency = 0.25 }, 0.25)
-	end
-
-	local function ensure()
-		if btn then return end
-		btn = create("TextButton", {
-			Text = label, TextScaled = true, Font = Library.BoldFont,
-			AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(64, 64),
-			BackgroundColor3 = Library.Theme.Background, BackgroundTransparency = 0.25,
-			ZIndex = window.Visible and 0 or 60, Active = true,
-		}, window.Gui)
-		round(btn, 32)
-		pad(btn, 8, 8, 8, 8)
-		create("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 8 }, btn)
-		local st = stroke(btn, Library.Theme.Accent)
-		st.Thickness = 2
-		bindAccent(function(c)
-			st.Color = c
-			refresh()
-		end, btn)
-		window._pins[btn] = true
-		btn.Destroying:Connect(function() window._pins[btn] = nil end)
-		applyPos()
-		tapDrag(btn, {
-			canDrag = function() return window.Visible end,
-			onMoved = function(x, y) posEl.CurrentValue = { X = x, Y = y } end,
-			onDragEnd = function() window:_queueSave() end,
-			onDown = function()
-				if hold and not window.Visible then
-					el.Holding = true
-					safeCall(el.Callback, true)
-				end
-			end,
-			onUp = function(moved)
-				if hold then
-					if el.Holding then
-						el.Holding = false
-						safeCall(el.Callback, false)
-					end
-					return
-				end
-				if moved then return end
-				flash()
-				safeCall(el.Callback)
-			end,
-		})
-	end
-
-	local toggle = self:CreateToggle({
-		Name = "On-screen " .. label,
-		CurrentValue = false,
-		Callback = function(v)
-			if v then
-				ensure()
-				btn.Visible = true
-				refresh()
-			elseif btn then
-				btn.Visible = false
-			end
-		end,
-	})
-
-	local base = toggle.Flag or ("pin:" .. label)
-	Library.Flags[base .. ":pos"] = posEl
-	self:_finish(el, opts, toggle.Instance)
-	local baseDestroy = el.Destroy
-
-	function el:Refresh() refresh() end
-	function el:Set(k)
-		if typeof(k) == "EnumItem" then
-			self.CurrentValue = k.Name
-		elseif type(k) == "string" and k ~= "" then
-			self.CurrentValue = k
-		else
-			self.CurrentValue = "None"
-		end
-	end
-	function el:Destroy()
-		if btn then btn:Destroy() end
-		Library.Flags[base .. ":pos"] = nil
-		toggle:Destroy()
-		baseDestroy(self)
-	end
-
-	Library._keybinds[el] = true
-	return el
-end
-
 function Elements:CreateKeybind(opts)
 	opts = opts or {}
 	local window = self._window
@@ -696,9 +597,6 @@ function Elements:CreateKeybind(opts)
 		Holding = false,
 		Callback = opts.Callback,
 	}
-	if Library.Mobile then
-		return self:_createPin(el, opts)
-	end
 	local row = self:_row(26)
 	rowLabel(row, opts.Name or "Keybind", 0.5)
 	local btn = create("TextButton", {
@@ -729,13 +627,26 @@ function Elements:CreateKeybind(opts)
 		Library._captureCancel = function() listening = false; render() end
 		Library._capture = function(keyCode)
 			listening = false
-			if keyCode == Enum.KeyCode.Backspace then
+			if keyCode == Enum.KeyCode.Backspace or keyCode == Enum.KeyCode.Delete then
 				el:Set("None")
 			elseif keyCode ~= Enum.KeyCode.Escape then
 				el:Set(keyCode.Name)
 			end
 			render()
 		end
+	end)
+
+	if window and not Library.Mobile then
+		btn.MouseEnter:Connect(function() window:_showTip("Right click to clear") end)
+		btn.MouseLeave:Connect(function() window:_hideTip() end)
+		btn.MouseMoved:Connect(function() window:_moveTip() end)
+	end
+
+	btn.MouseButton2Click:Connect(function()
+		if Library._captureCancel then Library._captureCancel() end
+		Library._capture, Library._captureCancel = nil, nil
+		listening = false
+		el:Set("None")
 	end)
 
 	Library._keybinds[el] = true
@@ -754,13 +665,13 @@ function Elements:CreateDropdown(opts)
 	elseif type(initial) == "table" then el.CurrentValue = { table.unpack(initial) } end
 	if not multi and #el.CurrentValue > 1 then el.CurrentValue = { el.CurrentValue[1] } end
 
+	local headH = sz(26, 38)
 	local wrapper = create("Frame", {
 		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = nextOrder(self),
 	}, self._container)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
 
-	local headH = sz(26, 38)
 	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, headH), LayoutOrder = 1 }, wrapper)
 	rowLabel(head, opts.Name or "Dropdown", 0.4)
 	local valueLabel = create("TextLabel", {
@@ -852,6 +763,7 @@ function Elements:CreateColorPicker(opts)
 	local start = opts.Color or opts.CurrentValue or Color3.fromRGB(255, 255, 255)
 	local el = { Type = "ColorPicker", CurrentValue = start }
 	local h, s, v = start:ToHSV()
+	local headH = sz(26, 38)
 
 	local wrapper = create("Frame", {
 		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
@@ -859,7 +771,7 @@ function Elements:CreateColorPicker(opts)
 	}, self._container)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
 
-	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, sz(26, 38)), LayoutOrder = 1 }, wrapper)
+	local head = create("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, headH), LayoutOrder = 1 }, wrapper)
 	rowLabel(head, opts.Name or "Color", 0.6)
 	local swatch = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(sz(30, 40), sz(14, 22)),
@@ -872,7 +784,9 @@ function Elements:CreateColorPicker(opts)
 	}, wrapper)
 	round(picker, 4)
 
-	local sv = create("Frame", { Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -sz(42, 58), 0, sz(92, 128)), ClipsDescendants = true }, picker)
+	local sv = create("Frame", {
+		Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -sz(42, 58), 0, sz(92, 128)), ClipsDescendants = true,
+	}, picker)
 	local white = create("Frame", { BackgroundColor3 = Color3.new(1, 1, 1), Size = UDim2.fromScale(1, 1) }, sv)
 	create("UIGradient", { Transparency = NumberSequence.new(0, 1) }, white)
 	local black = create("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1) }, sv)
@@ -948,12 +862,12 @@ function Elements:CreateEntryList(opts)
 			table.insert(rows, empty)
 			return
 		end
+		local bw, bh = sz(46, 58), sz(20, 30)
+		local step = bw + 4
 		for i, e in ipairs(entries) do
 			local row = create("Frame", { BackgroundColor3 = Library.Theme.Header, Size = UDim2.new(1, 0, 0, sz(28, 40)), LayoutOrder = i }, wrapper)
 			round(row, 4)
 			local actions = e.Actions or {}
-			local bw, bh = sz(46, 58), sz(20, 30)
-			local step = bw + 4
 			create("TextLabel", {
 				Text = e.Text, Position = UDim2.fromOffset(9, 0), Size = UDim2.new(1, -(14 + step * #actions), 1, 0),
 				TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
@@ -984,27 +898,27 @@ end
 local function makePanel(window, parent, o)
 	local theme = Library.Theme
 	local name, width = o.Name, o.Width
-	local sidePad = o.SidePad or 0
-	local topPad, botPad = o.TopPad or 0, o.BotPad or 0
+	local isCat = o.Category
+	local sidePad, topPad, botPad = o.SidePad or 0, o.TopPad or 0, o.BotPad or 0
 	local hh = sz(34, 42)
 
 	local panel = create("Frame", {
-		Name = name, BackgroundColor3 = o.AccentBg and theme.Accent or theme.Background,
-		BackgroundTransparency = o.AccentBg and 0.05 or 0.03,
-		Position = o.Position, Size = UDim2.fromOffset(width, hh), ClipsDescendants = true, Active = Library.Mobile,
+		Name = name, BackgroundColor3 = theme.Background, BackgroundTransparency = 0.03,
+		Position = o.Position, Size = UDim2.fromOffset(width, hh), ClipsDescendants = true,
 	}, parent)
 	round(panel, 6)
 	stroke(panel)
-	if o.AccentBg then
-		bindAccent(function(c) panel.BackgroundColor3 = c end, panel)
-	end
 
 	local header = create("TextButton", {
-		BackgroundColor3 = theme.Background, BackgroundTransparency = o.AccentBg and 0 or 1,
-		Size = UDim2.new(1, 0, 0, hh),
+		BackgroundColor3 = theme.Background, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, hh),
 	}, panel)
+	local headerCorner
+	if isCat then
+		bindAccent(function(c) header.BackgroundColor3 = c end, header)
+		headerCorner = round(header, 6)
+	end
 	create("TextLabel", {
-		Text = name, Font = Library.BoldFont, TextSize = 14, Position = UDim2.fromOffset(12, 0),
+		Text = name, Font = Library.BoldFont, TextSize = sz(14, 15), Position = UDim2.fromOffset(12, 0),
 		Size = UDim2.new(1, -40, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
 	}, header)
 	local sign = create("TextLabel", {
@@ -1022,12 +936,8 @@ local function makePanel(window, parent, o)
 		ScrollBarThickness = sz(2, 4), Active = Library.Mobile, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, panel)
-	if o.AccentBg then
-		body.ScrollBarImageColor3 = Color3.new(1, 1, 1)
-	else
-		bindAccent(function(c) body.ScrollBarImageColor3 = c end, body)
-	end
-	pad(body, sidePad, sidePad, topPad, botPad)
+	bindAccent(function(c) body.ScrollBarImageColor3 = c end, body)
+	local bodyPad = pad(body, sidePad, sidePad, topPad, botPad)
 	local layout = create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, o.Gap or 0) }, body)
 
 	local p = { Panel = panel, Body = body, Collapsed = false }
@@ -1053,6 +963,21 @@ local function makePanel(window, parent, o)
 	table.insert(window._panels, p)
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
 	if Library.Mobile then resize() end
+
+	if isCat then
+		bindStyle(function()
+			local S = style()
+			sidePad, topPad, botPad = S.Side, S.Top, S.Bot
+			panel.BackgroundTransparency = S.Panel
+			header.BackgroundTransparency = S.Solid and 0 or 1
+			headerCorner.CornerRadius = UDim.new(0, S.Solid and 6 or 0)
+			line.Visible = not S.Solid
+			bodyPad.PaddingLeft, bodyPad.PaddingRight = UDim.new(0, sidePad), UDim.new(0, sidePad)
+			bodyPad.PaddingTop, bodyPad.PaddingBottom = UDim.new(0, topPad), UDim.new(0, botPad)
+			layout.Padding = UDim.new(0, S.Gap)
+			resize()
+		end, panel)
+	end
 
 	function p.SetCollapsed(c)
 		p.Collapsed = c and true or false
@@ -1117,23 +1042,20 @@ function Category:CreateModule(opts)
 		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = nextOrder(self),
 	}, self._container)
-	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, wrapper)
+	local wrapLayout = create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, wrapper)
 
-	local head = create("TextButton", {
-		BackgroundColor3 = theme.Module, BackgroundTransparency = 0.55, Size = UDim2.new(1, 0, 0, sz(30, 42)), LayoutOrder = 1,
-	}, wrapper)
-	round(head, 4)
-	local bar = create("Frame", {
-		BackgroundColor3 = Color3.new(1, 1, 1), Position = UDim2.fromOffset(0, 6), Size = UDim2.new(0, 3, 1, -12), Visible = false,
-	}, head)
-	round(bar, 2)
+	local headH = sz(30, 42)
+	local head = create("TextButton", { BackgroundColor3 = theme.Module, Size = UDim2.new(1, 0, 0, headH), LayoutOrder = 1 }, wrapper)
+	local headRound = round(head, 4)
+	local bar = create("Frame", { Visible = false }, head)
+	local barRound = round(bar, 2)
 	local title = create("TextLabel", {
 		Text = mod.Name, Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -sz(44, 54), 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, head)
 
 	local dotsBtn = create("TextButton", {
-		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(sz(30, 46), sz(30, 42)),
+		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(sz(30, 46), headH),
 	}, head)
 	local dots = {}
 	for i = -1, 1 do
@@ -1145,39 +1067,52 @@ function Category:CreateModule(opts)
 	end
 
 	local settings = create("Frame", {
-		BackgroundColor3 = theme.Setting, BackgroundTransparency = 0.2, Size = UDim2.new(1, 0, 0, 0),
+		BackgroundColor3 = theme.Setting, Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, Visible = false, LayoutOrder = 2,
 	}, wrapper)
-	round(settings, 4)
+	local settingsRound = round(settings, 4)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, settings)
 	pad(settings, 12, 10, 6, 8)
 	mod._container = settings
 
 	local hovering = false
 	local function render(animate)
+		local S = style()
 		local on = mod.CurrentValue
-		local color, transparency
+		local color, transparency = themed(S.Off), S.OffT
 		if on then
-			color = Library.Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.35)
-			transparency = 0.25
-		else
-			color = Library.Theme.Module
-			transparency = 0.55
+			color = color:Lerp(Library.Theme.Accent, S.OnMix)
+			transparency = S.OnT
 		end
-		if hovering then transparency = math.max(transparency - 0.12, 0) end
+		if hovering then
+			color = color:Lerp(Color3.new(1, 1, 1), S.HoverMix)
+			transparency = math.max(transparency - S.HoverT, 0)
+		end
 		bar.Visible = on
-		title.TextColor3 = on and Library.Theme.Text or Library.Theme.TextDim
+		bar.BackgroundColor3 = Library.Theme.Accent
+		title.TextColor3 = on and Library.Theme.Text or themed(S.Dim)
 		if animate then
 			tween(head, { BackgroundColor3 = color, BackgroundTransparency = transparency })
 		else
 			head.BackgroundColor3 = color
 			head.BackgroundTransparency = transparency
 		end
-		local dotColor = settings.Visible and Color3.new(1, 1, 1) or Library.Theme.TextDim
+		local dotColor = settings.Visible and Library.Theme.Accent or themed(S.Dim)
 		for _, d in ipairs(dots) do d.BackgroundColor3 = dotColor end
-		if mod._pin and mod._pin.Refresh then mod._pin:Refresh() end
 	end
 	bindAccent(function() render(false) end, wrapper)
+	bindStyle(function()
+		local S = style()
+		wrapLayout.Padding = UDim.new(0, S.ModGap)
+		headRound.CornerRadius = UDim.new(0, S.Round)
+		bar.Position = UDim2.fromOffset(0, S.BarInset)
+		bar.Size = UDim2.new(0, 3, 1, -S.BarInset * 2)
+		barRound.CornerRadius = UDim.new(0, S.BarRound)
+		settings.BackgroundColor3 = themed(S.Setting)
+		settings.BackgroundTransparency = S.SettingT
+		settingsRound.CornerRadius = UDim.new(0, S.SetRound)
+		render(false)
+	end, wrapper)
 
 	local function setOpen(open)
 		settings.Visible = open
@@ -1189,11 +1124,21 @@ function Category:CreateModule(opts)
 		if v == self.CurrentValue then return end
 		self.CurrentValue = v
 		render(true)
-		window:_hudSet(self, v)
 		if not silent then
 			emit(window, opts.Callback, v)
 			if window.ToggleNotify and not window._loading then
-				window:Notify({ Title = self.Name, Content = v and "Enabled" or "Disabled", Duration = 1.5 })
+				local text
+				if v then
+					text = opts.NotifyOn
+				else
+					text = opts.NotifyOff
+				end
+				if text == nil then
+					text = v and "Enabled" or "Disabled"
+				end
+				if text then
+					window:Notify({ Title = self.Name, Content = text, Duration = 1.5 })
+				end
 			end
 		end
 	end
@@ -1202,7 +1147,6 @@ function Category:CreateModule(opts)
 	function mod:Expand(open) setOpen(open ~= false) end
 	function mod:Destroy()
 		if Library.Flags[flag] == self then Library.Flags[flag] = nil end
-		window:_hudSet(self, false)
 		wrapper:Destroy()
 	end
 
@@ -1227,17 +1171,17 @@ function Category:CreateModule(opts)
 	if Library.Mobile and opts.Description then
 		mod:CreateLabel(opts.Description)
 	end
-	mod._pin = mod:CreateKeybind({
-		Name = "Bind", CurrentKeybind = opts.Keybind, PinLabel = mod.Name,
-		GetState = function() return mod.CurrentValue end,
-		Callback = function() mod:Toggle() end,
-	})
+	if not Library.Mobile then
+		mod:CreateKeybind({
+			Name = "Bind", CurrentKeybind = opts.Keybind,
+			Callback = function() mod:Toggle() end,
+		})
+	end
 	render(false)
 
 	if opts.CurrentValue == true or opts.Enabled == true then
 		mod.CurrentValue = true
 		render(false)
-		window:_hudSet(mod, true)
 		safeCall(opts.Callback, true)
 	end
 	return mod
@@ -1258,6 +1202,7 @@ function Library:CreateWindow(opts)
 	Library.TextSize = Library.Mobile and 15 or 13
 	local cs = opts.ConfigurationSaving or {}
 	local theme = Library.Theme
+	local navH = sz(38, 40)
 
 	local window = setmetatable({
 		Name = opts.Name or "Meteor",
@@ -1267,14 +1212,11 @@ function Library:CreateWindow(opts)
 		Categories = {},
 		_pages = {},
 		_pageCount = 0,
-		_hud = {},
 		_panels = {},
-		_pins = {},
-		_pinCount = 0,
-		Mobile = Library.Mobile,
 		_z = 1,
 		_saveQueued = false,
 		_loading = false,
+		Mobile = Library.Mobile,
 		Visible = true,
 		ToggleNotify = false,
 		Config = {
@@ -1294,7 +1236,6 @@ function Library:CreateWindow(opts)
 		Size = UDim2.fromScale(1, 1), Visible = window._dim,
 	}, window.Holder)
 
-	local navH = sz(38, 40)
 	if Library.Mobile then
 		window.Nav = create("ScrollingFrame", {
 			BackgroundColor3 = theme.Background, BackgroundTransparency = 0.03, AnchorPoint = Vector2.new(0.5, 0),
@@ -1305,7 +1246,7 @@ function Library:CreateWindow(opts)
 	else
 		window.Nav = create("Frame", {
 			BackgroundColor3 = theme.Background, BackgroundTransparency = 0.03, AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.new(0, 0, 0, 38), AutomaticSize = Enum.AutomaticSize.X,
+			Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.new(0, 0, 0, navH), AutomaticSize = Enum.AutomaticSize.X,
 		}, window.Holder)
 	end
 	round(window.Nav, 8)
@@ -1320,14 +1261,6 @@ function Library:CreateWindow(opts)
 		Text = window.Name, Font = Library.BoldFont, TextSize = 14, Size = UDim2.fromOffset(titleWidth, navH), LayoutOrder = -1000,
 	}, window.Nav)
 	bindAccent(function(c) navTitle.TextColor3 = c end, navTitle)
-
-	window.Hud = create("Frame", {
-		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, sz(8, 54)),
-		Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, Visible = false, ZIndex = 5,
-	}, window.Gui)
-	create("UIListLayout", {
-		SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 1),
-	}, window.Hud)
 
 	local phone = Library.Mobile
 	window.NotifHolder = create("Frame", {
@@ -1401,9 +1334,6 @@ function Window:SetVisible(v)
 	self.Holder.Visible = self.Visible
 	if self.Fab then self.Fab.Visible = not self.Visible end
 	if self.CloseBtn then self.CloseBtn.Visible = self.Visible end
-	for pin in pairs(self._pins) do
-		pin.ZIndex = self.Visible and 0 or 60
-	end
 	if not self.Visible then self:_hideTip() end
 end
 
@@ -1415,8 +1345,6 @@ function Window:_viewport()
 end
 
 function Window:Toggle() self:SetVisible(not self.Visible) end
-
-function Window:SetHudVisible(v) self.Hud.Visible = v and true or false end
 
 function Window:SetDim(v)
 	self._dim = v and true or false
@@ -1435,23 +1363,6 @@ function Window:_moveTip()
 	if not self.Tip.Visible then return end
 	local m = UIS:GetMouseLocation()
 	self.Tip.Position = UDim2.fromOffset(m.X + 14, m.Y + 16)
-end
-
-function Window:_hudSet(mod, on)
-	local label = self._hud[mod]
-	if on and not label then
-		local w = TextService:GetTextSize(mod.Name, sz(13, 14), Library.Font, Vector2.new(500, 30)).X
-		label = create("TextLabel", {
-			Text = mod.Name, BackgroundTransparency = 0.45, BackgroundColor3 = Color3.new(0, 0, 0),
-			Size = UDim2.new(), AutomaticSize = Enum.AutomaticSize.XY, LayoutOrder = -math.floor(w), TextSize = sz(13, 14), ZIndex = 5,
-		}, self.Hud)
-		pad(label, 7, 7, 2, 2)
-		bindAccent(function(c) label.TextColor3 = c end, label)
-		self._hud[mod] = label
-	elseif not on and label then
-		label:Destroy()
-		self._hud[mod] = nil
-	end
 end
 
 function Window:Notify(opts)
@@ -1542,7 +1453,7 @@ end
 function Window:_createMobileCategory(name)
 	local screen = create("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false }, self.Holder)
 	local p = makePanel(self, screen, {
-		Name = name, Position = UDim2.new(0.5, 0, 0, 54), Width = 340, Draggable = false, AccentBg = true,
+		Name = name, Position = UDim2.new(0.5, 0, 0, 54), Width = 340, Category = true,
 		SidePad = 6, TopPad = 6, BotPad = 6, Gap = 4, MaxHeight = 480,
 	})
 	p.Panel.AnchorPoint = Vector2.new(0.5, 0)
@@ -1569,8 +1480,7 @@ function Window:CreateCategory(name)
 	local y = 66 + math.floor(idx / perRow) * 44
 
 	local p = makePanel(self, self._modulesScreen, {
-		Name = name, Position = UDim2.fromOffset(x, y), Width = width, Draggable = true, AccentBg = true,
-		SidePad = 4, TopPad = 4, BotPad = 4, Gap = 3,
+		Name = name, Position = UDim2.fromOffset(x, y), Width = width, Draggable = true, Category = true,
 	})
 	local cat = setmetatable({ Name = name, _window = self, _container = p.Body, _order = 0, Panel = p.Panel, _p = p }, Category)
 	table.insert(self.Categories, cat)
@@ -1789,6 +1699,7 @@ function Window:_queueSave()
 	self._saveQueued = true
 	task.delay(0.6, function()
 		self._saveQueued = false
+		if self._destroyed then return end
 		self:SaveConfiguration()
 	end)
 end
@@ -1856,35 +1767,67 @@ function Window:_buildGuiPage()
 			if c and accent then accent:Set(c) end
 		end,
 	})
+	page:CreateDropdown({
+		Name = "Modules Style", Options = Library.ModuleStyleOrder, CurrentOption = Library.ModuleStyle, Flag = "gui:ModuleStyle",
+		Callback = function(o) Library:SetModuleStyle(o[1]) end,
+	})
 	accent = page:CreateColorPicker({
-		Name = "Accent color", Color = Library.Theme.Accent, Flag = "gui:Accent",
+		Name = "Color", Color = Library.Theme.Accent, Flag = "gui:Accent",
 		Callback = function(c) Library:SetAccent(c) end,
 	})
-	page:CreateToggle({ Name = "Rainbow accent", CurrentValue = false, Flag = "gui:Rainbow", Callback = function(v) Library:SetRainbow(v) end })
+	page:CreateToggle({ Name = "Rainbow", CurrentValue = false, Flag = "gui:Rainbow", Callback = function(v) Library:SetRainbow(v) end })
 
 	page:CreateSection("Interface")
-	page:CreateToggle({ Name = "Show Active Modules", CurrentValue = false, Flag = "gui:ShowActiveModules", Callback = function(v) window:SetHudVisible(v) end })
 	page:CreateToggle({ Name = "Toggle notifications", CurrentValue = false, Flag = "gui:ToggleNotify", Callback = function(v) window.ToggleNotify = v end })
 	page:CreateToggle({ Name = "Dim background", CurrentValue = window._dim, Flag = "gui:Dim", Callback = function(v) window:SetDim(v) end })
-	page:CreateKeybind({
-		Name = "Menu key", CurrentKeybind = self.ToggleKey, Flag = "gui:MenuKey",
-		OnBind = function(k) window.ToggleKey = (k ~= "None") and Enum.KeyCode[k] or nil end,
-	})
+	if not Library.Mobile then
+		page:CreateKeybind({
+			Name = "Menu key", CurrentKeybind = self.ToggleKey, Flag = "gui:MenuKey",
+			OnBind = function(k) window.ToggleKey = (k ~= "None") and Enum.KeyCode[k] or nil end,
+		})
+	end
 	page:CreateButton({ Name = "Unload GUI", Callback = function() Library:Destroy() end })
 	self.GuiPage = page
 end
 
 function Window:Destroy()
+	self._destroyed = true
 	if self.Gui then self.Gui:Destroy() end
 end
 
+function Library:OnUnload(fn)
+	if type(fn) == "function" then table.insert(self._unloadHooks, fn) end
+end
+
 function Library:Destroy()
+	for _, w in ipairs(self._windows) do
+		if w.Config.Enabled and not w._loading then pcall(function() w:SaveConfiguration() end) end
+		w._loading = true
+	end
+	local mods = {}
+	for _, el in pairs(self.Flags) do
+		if el.Type == "Module" and el.CurrentValue then table.insert(mods, el) end
+	end
+	for _, m in ipairs(mods) do pcall(function() m:Set(false) end) end
+	for _, fn in ipairs(self._unloadHooks) do pcall(fn) end
+	self._unloadHooks = {}
+
 	for _, c in ipairs(self._conns) do pcall(function() c:Disconnect() end) end
 	for _, w in ipairs(self._windows) do w:Destroy() end
 	self._conns, self._accent, self._windows, self._keybinds = {}, {}, {}, {}
+	self._styleFns = {}
 	self.Flags, self.Lists = {}, {}
 	self._inputInit, self._rainbowConn, self._capture, self._captureCancel = nil, nil, nil, nil
 	self.Rainbow = false
+end
+
+do
+	local genv = (type(getgenv) == "function" and getgenv()) or _G
+	local old = genv.__MeteorUI_Active
+	if old and old ~= Library and type(old.Destroy) == "function" then
+		pcall(function() old:Destroy() end)
+	end
+	genv.__MeteorUI_Active = Library
 end
 
 return Library
