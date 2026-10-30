@@ -327,6 +327,7 @@ Page.__index = Page
 
 local Category = {}
 Category.__index = Category
+setmetatable(Category, { __index = Elements })
 
 local Window = {}
 Window.__index = Window
