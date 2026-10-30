@@ -1326,7 +1326,36 @@ function Library:CreateWindow(opts)
 	window:SelectPage("Modules")
 
 	table.insert(Library._windows, window)
+	Library:_setMouse(window.Visible)
 	return window
+end
+
+function Library:_setMouse(open)
+	if Library.Mobile then return end
+	if open then
+		if not self._mouse then
+			self._mouse = { behavior = UIS.MouseBehavior, icon = UIS.MouseIconEnabled }
+		end
+		UIS.MouseBehavior = Enum.MouseBehavior.Default
+		UIS.MouseIconEnabled = true
+		if not self._mouseBind then
+			self._mouseBind = "MeteorMouseUnlock"
+			RunService:BindToRenderStep(self._mouseBind, Enum.RenderPriority.Last.Value, function()
+				UIS.MouseBehavior = Enum.MouseBehavior.Default
+				UIS.MouseIconEnabled = true
+			end)
+		end
+	else
+		if self._mouseBind then
+			RunService:UnbindFromRenderStep(self._mouseBind)
+			self._mouseBind = nil
+		end
+		if self._mouse then
+			UIS.MouseBehavior = self._mouse.behavior
+			UIS.MouseIconEnabled = self._mouse.icon
+			self._mouse = nil
+		end
+	end
 end
 
 function Window:SetVisible(v)
@@ -1335,6 +1364,7 @@ function Window:SetVisible(v)
 	if self.Fab then self.Fab.Visible = not self.Visible end
 	if self.CloseBtn then self.CloseBtn.Visible = self.Visible end
 	if not self.Visible then self:_hideTip() end
+	Library:_setMouse(self.Visible)
 end
 
 function Window:_viewport()
@@ -1800,6 +1830,7 @@ function Library:OnUnload(fn)
 end
 
 function Library:Destroy()
+	self:_setMouse(false)
 	for _, w in ipairs(self._windows) do
 		if w.Config.Enabled and not w._loading then pcall(function() w:SaveConfiguration() end) end
 		w._loading = true
